@@ -1,7 +1,11 @@
 streamlit
 openai
 tiktoken
-PyPDF2
+PyMuPDF
 pandas
 openpyxl
 tabulate
+pdf2image
+boto3
+textractor
+amazon-textract-textractor

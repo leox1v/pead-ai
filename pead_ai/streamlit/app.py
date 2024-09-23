@@ -2,16 +2,63 @@ import streamlit as st
 import PyPDF2
 import io
 import pandas as pd
+import base64
+from openai import OpenAI
+import os
+from PIL import Image
+from pdf2image import convert_from_path
+from pdf2image import convert_from_bytes
+from pead_ai.prompts import system_prompt, prompt_to_csv, prompt_to_md
+import pandas as pd
+import io
 
-def extract_text_from_pdf(pdf_file):
-    pdf_reader = PyPDF2.PdfReader(pdf_file)
-    text = ""
-    for page in pdf_reader.pages:
-        text += page.extract_text()
-    return text
+import fitz  # PyMuPDF
+import base64
+import boto3
+from textractor import Textractor
 
-def excel_to_markdown(df):
-    return df.to_markdown(index=False)
+from pead_ai.pdf2img import Converter
+from pead_ai.tableimg2csv import TableImageToCSV
+
+tableimg2csv = TableImageToCSV(
+    region_name='eu-central-1',
+    aws_access_key_id=os.get_env('AWS_ACCESS_KEY_ID'),
+    aws_secret_access_key=os.get_env('AWS_SECRET_ACCESS_KEY')
+)
+
+
+def analyze_page_with_gpt4(csv_table: str, client, prompt=prompt_to_md):
+    messages = [
+        {
+            "role": "system",
+            "content": system_prompt,
+        },
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "text",
+                    "text": prompt,
+                },
+                {
+                    "type": "text",
+                    "text": csv_table
+                }
+            ]
+        }
+    ]
+
+    response = client.chat.completions.create(
+        model="gpt-4o",
+        messages=messages,
+        max_tokens=1000
+    )
+
+    # TODO: add image to GPT-4o
+    
+    return response.choices[0].message.content
+
+
 
 st.title("File Content Extractor")
 
@@ -20,48 +67,28 @@ uploaded_file = st.file_uploader("Choose a PDF or Excel file", type=["pdf", "xls
 if uploaded_file is not None:
     file_extension = uploaded_file.name.split(".")[-1].lower()
 
-    if file_extension == "pdf":
-        # Handle PDF
-        bytes_data = uploaded_file.getvalue()
-        pdf_file = io.BytesIO(bytes_data)
-        text = extract_text_from_pdf(pdf_file)
+    converter = Converter(uploaded_file)
+    converter.pdf_to_jpg()
+    images = converter.image_paths
+    st.write(len(images))
 
-        st.subheader("Extracted Text:")
-        st.text_area("Content", text, height=300)
+    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+    for i, image in enumerate(images):  # TODO: remove this
+        st.write(f"Page {i+1}:")
+        csv = tableimg2csv.process_image(image)
+        analysis = analyze_page_with_gpt4(csv, client)
+        st.markdown(analysis)
 
-        # Option to download the extracted text
-        st.download_button(
-            label="Download extracted text",
-            data=text,
-            file_name="extracted_text.txt",
-            mime="text/plain"
-        )
+        # try:
+        #     csv2 = analyze_page_with_gpt4(analysis, client, prompt=prompt_to_csv)
+        #     df = pd.read_csv(io.StringIO(csv2), sep=',')
+        #     st.dataframe(df)
+        # except Exception as e:
+        #     st.error(e)
 
-    elif file_extension == "xlsx":
-        # Handle Excel
-        df = pd.read_excel(uploaded_file)
-        markdown_table = excel_to_markdown(df)
+        st.divider()
 
-        st.subheader("Excel Content (Markdown Table):")
-        st.markdown(markdown_table)
 
-        # Option to download the markdown table
-        st.download_button(
-            label="Download markdown table",
-            data=markdown_table,
-            file_name="excel_content.md",
-            mime="text/markdown"
-        )
 
-        # Display DataFrame
-        st.subheader("Excel Content (DataFrame):")
-        st.dataframe(df)
-
-        # Option to download CSV
-        csv = df.to_csv(index=False)
-        st.download_button(
-            label="Download as CSV",
-            data=csv,
-            file_name="excel_content.csv",
-            mime="text/csv"
-        )
+    # Option to download the extracted text
+    # TODO
